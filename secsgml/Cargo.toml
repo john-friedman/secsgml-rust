@@ -2,6 +2,10 @@
 name = "secsgml"
 version = "0.1.0"
 edition = "2021"
+authors = ["John Friedman <johnfriedman@datamule.xyz>"]
+description = "A parser for SEC SGML filings"
+license = "MIT"
+repository = "https://github.com/john-friedman/secsgml-rust"
 
 [dependencies]
 lazy_static = "1.4.0"
