@@ -3,6 +3,7 @@ use std::env;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
+use std::time::Instant;
 
 fn main() -> Result<(), String> {
     let args: Vec<String> = env::args().collect();
@@ -19,7 +20,10 @@ fn main() -> Result<(), String> {
             .map_err(|e| format!("Failed to create output directory: {}", e))?;
     }
 
+    let start = Instant::now();
     let (metadata, documents) = parse_sgml_submission_into_memory(None, Some(filepath))?;
+    let duration = start.elapsed();
+    println!("SGML parsing took: {:?}", duration);
 
     // Write metadata to JSON file
     let metadata_path = output_dir.join("metadata.json");

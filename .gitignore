@@ -37,3 +37,6 @@ $RECYCLE.BIN/
 
 # Core dumps
 core
+
+# data
+sgml_samples/*
