@@ -1,0 +1,18 @@
+[package]
+name = "secsgml"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lazy_static = "1.4.0"
+serde = { version = "1.0.193", features = ["derive"] }
+serde_json = "1.0.108"
+uuencode = "0.1.0"
+
+[[bin]]
+name = "sgml_parser_cli"
+path = "src/main.rs"
+
+[lib]
+name = "sgml_parser"
+path = "src/lib.rs"

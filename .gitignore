@@ -1,0 +1,39 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+Cargo.lock
+*.pdb
+
+# OS specific - Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+
+# VS Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.history/
+
+# OS development specific
+*.bin
+*.iso
+*.img
+*.elf
+*.o
+*.a
+*.d
+*.sym
+
+# Log files
+*.log
+
+# Core dumps
+core
