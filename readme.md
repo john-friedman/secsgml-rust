@@ -1,0 +1,1 @@
+cargo run --release --bin benchmark_sgml ../sgml_samples benchmark_results.txt

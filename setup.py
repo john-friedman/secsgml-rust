@@ -17,7 +17,7 @@ try:
     # Simplified setup for debugging
     setup(
         name="secsgml2",
-        version="0.1.0",
+        version="0.0.3",
         packages=["secsgml2"],
         rust_extensions=[
             RustExtension(
