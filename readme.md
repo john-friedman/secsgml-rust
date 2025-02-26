@@ -2,4 +2,10 @@
 
 SEC SGML Parser implemented in Rust.
 
-Seems to be about 50x slower than my python implentation. Fun learning project tho.
+commands:
+cargo run --release --bin benchmark_sgml ../sgml_samples ../benchmark_results.txt
+cargo run --release -- ../296920000049.sgml ../output
+
+Neat: We appear to have sped up from 3s (python) to 1.7s
+
+Let's setup bindings now

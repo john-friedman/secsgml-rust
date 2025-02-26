@@ -1,12 +1,25 @@
 #[macro_use]
 extern crate lazy_static;
 
-mod sgml_parser;
-mod uu_decode;
+pub mod benchmark;
+pub mod sgml_extractor;
+pub mod sgml_parser;
 
-pub use sgml_parser::determine_file_extension;
-pub use sgml_parser::parse_sgml_submission_into_memory;
-pub use uu_decode::decode as uu_decode;
+#[cfg(feature = "python")]
+pub mod python;
 
-// Re-export serde_json for use in main.rs
-pub use serde_json;
+pub use sgml_extractor::*;
+pub use sgml_parser::*;
+
+#[cfg(feature = "python")]
+use pyo3::wrap_pymodule;
+
+#[cfg(feature = "python")]
+use pyo3::prelude::*;
+
+#[cfg(feature = "python")]
+#[pymodule]
+fn rust_sgml(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_wrapped(wrap_pymodule!(python::rust_sgml))?;
+    Ok(())
+}

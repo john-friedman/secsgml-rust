@@ -1,36 +1,37 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
-use std::io::{self, Read};
-use std::iter::Iterator;
-use std::path::Path;
-use std::str;
+use std::fs;
+use thiserror::Error;
+use uuencode::uudecode;
 
-// Import our UU decoder
-use crate::uu_decode;
+#[derive(Error, Debug)]
+pub enum SgmlParserError {
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
 
-type MetadataDict = HashMap<String, Value>;
+    #[error("UUDecode error: {0}")]
+    UUDecodeError(String),
 
-// Constants for submission types
-lazy_static! {
-    static ref SUBMISSION_TYPES: HashMap<&'static str, &'static str> = {
-        let mut m = HashMap::new();
-        m.insert("<SUBMISSION>", "dashed-default");
-        m.insert("-----BEGIN PRIVACY-ENHANCED MESSAGE-----", "tab-privacy");
-        m.insert("<SEC-DOCUMENT>", "tab-default");
-        m
-    };
-    static ref SPECIAL_TAGS: HashSet<&'static str> = {
-        let mut s = HashSet::new();
-        s.insert("<PDF>");
-        s.insert("<XBRL>");
-        s.insert("<XML>");
-        s
-    };
+    #[error("JSON error: {0}")]
+    JsonError(#[from] serde_json::Error),
+
+    #[error("No valid begin line found")]
+    NoBeginLine,
+
+    #[error("Unknown submission type")]
+    UnknownSubmissionType,
 }
 
-#[derive(Debug)]
+pub type MetadataDict = HashMap<String, MetadataValue>;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(untagged)]
+pub enum MetadataValue {
+    String(String),
+    List(Vec<MetadataValue>),
+    Dict(MetadataDict),
+}
+
 struct DocumentIndex {
     document_positions: Vec<(usize, usize)>,
     text_positions: Vec<(usize, usize)>,
@@ -38,433 +39,226 @@ struct DocumentIndex {
     text_leftovers: HashMap<usize, String>,
 }
 
-impl DocumentIndex {
-    fn new() -> Self {
-        DocumentIndex {
-            document_positions: Vec::new(),
-            text_positions: Vec::new(),
-            header_end: 0,
-            text_leftovers: HashMap::new(),
-        }
-    }
-}
+// Preallocated static constants for submission types
+const SUBMISSION_TYPE_DASHED: &str = "dashed-default";
+const SUBMISSION_TYPE_PRIVACY: &str = "tab-privacy";
+const SUBMISSION_TYPE_DEFAULT: &str = "tab-default";
 
-fn detect_submission_type(first_line: &str) -> Result<&'static str, String> {
-    for (marker, submission_type) in SUBMISSION_TYPES.iter() {
-        if first_line.starts_with(marker) {
-            return Ok(*submission_type);
-        }
-    }
-    Err("Unknown submission type".to_string())
-}
+// Special tags as constants
+const TAG_PDF: &str = "<PDF>";
+const TAG_XBRL: &str = "<XBRL>";
+const TAG_XML: &str = "<XML>";
+const DOCUMENT_START: &str = "<DOCUMENT>";
+const DOCUMENT_END: &str = "</DOCUMENT>";
+const TEXT_START: &str = "<TEXT>";
+const TEXT_END: &str = "</TEXT>";
 
-pub fn determine_file_extension(doc_meta: &Value) -> String {
-    if let Value::Object(obj) = doc_meta {
-        // Check for document type in metadata
-        if let Some(Value::String(doc_type)) = obj.get("type") {
-            match doc_type.to_lowercase().as_str() {
-                "10-k" | "10-q" | "8-k" => return "txt".to_string(),
-                "html" | "htm" => return "html".to_string(),
-                "xml" => return "xml".to_string(),
-                "pdf" => return "pdf".to_string(),
-                "xbrl" => return "xbrl".to_string(),
-                "graphic" | "jpg" | "jpeg" => return "jpg".to_string(),
-                "png" => return "png".to_string(),
-                "gif" => return "gif".to_string(),
-                // Add more mappings as needed
-                _ => {}
-            }
-        }
-
-        // Check filename if present
-        if let Some(Value::String(filename)) = obj.get("filename") {
-            if let Some(ext) = Path::new(filename).extension() {
-                if let Some(ext_str) = ext.to_str() {
-                    return ext_str.to_string();
-                }
-            }
-        }
-
-        // Check document format
-        if let Some(Value::String(format)) = obj.get("format") {
-            match format.to_lowercase().as_str() {
-                "html" | "htm" => return "html".to_string(),
-                "pdf" => return "pdf".to_string(),
-                "xml" => return "xml".to_string(),
-                "text" | "ascii" => return "txt".to_string(),
-                "jpg" | "jpeg" => return "jpg".to_string(),
-                "png" => return "png".to_string(),
-                "gif" => return "gif".to_string(),
-                // Add more mappings as needed
-                _ => {}
-            }
-        }
-    }
-
-    // Default extension if nothing matches
-    "txt".to_string()
-}
-
-fn parse_header_metadata(lines: &[String], submission_type: &str) -> MetadataDict {
-    let mut header_metadata: MetadataDict = HashMap::new();
-
-    if submission_type == "dashed-default" {
-        // We'll handle dashed-default in a way that simulates the recursive structure
-        // but works with Rust's ownership model
-        let mut tag_stack: Vec<String> = Vec::new();
-        let mut dict_stack: Vec<MetadataDict> = vec![HashMap::new()];
-
-        for line in lines {
-            if let Some(pos) = line.find('>') {
-                let tag = line[1..pos].to_lowercase();
-                let text = line[pos + 1..].trim().to_string();
-
-                // Handle closing tags
-                if tag.starts_with('/') {
-                    let close_tag = tag[1..].to_string();
-                    if !tag_stack.is_empty() && tag_stack.last().unwrap() == &close_tag {
-                        let finished_dict = dict_stack.pop().unwrap();
-                        let finished_tag = tag_stack.pop().unwrap();
-
-                        if !dict_stack.is_empty() {
-                            let parent_dict = dict_stack.last_mut().unwrap();
-
-                            if parent_dict.contains_key(&finished_tag) {
-                                // Convert to array if already exists
-                                match parent_dict.get_mut(&finished_tag) {
-                                    Some(Value::Array(arr)) => {
-                                        arr.push(Value::Object(
-                                            finished_dict
-                                                .iter()
-                                                .map(|(k, v)| (k.clone(), v.clone()))
-                                                .collect(),
-                                        ));
-                                    }
-                                    Some(existing) => {
-                                        let existing_value = existing.clone();
-                                        let mut new_arr = Vec::new();
-                                        new_arr.push(existing_value);
-                                        new_arr.push(Value::Object(
-                                            finished_dict
-                                                .iter()
-                                                .map(|(k, v)| (k.clone(), v.clone()))
-                                                .collect(),
-                                        ));
-                                        *existing = Value::Array(new_arr);
-                                    }
-                                    None => unreachable!(),
-                                }
-                            } else {
-                                parent_dict.insert(
-                                    finished_tag,
-                                    Value::Object(
-                                        finished_dict
-                                            .iter()
-                                            .map(|(k, v)| (k.clone(), v.clone()))
-                                            .collect(),
-                                    ),
-                                );
-                            }
-                        }
-                    }
-                    continue;
-                }
-
-                // Look ahead for closing tag
-                let has_closing_tag = lines
-                    .iter()
-                    .any(|l| l.trim().to_lowercase().starts_with(&format!("</{}>", tag)));
-
-                if has_closing_tag {
-                    // Start a new nested dict
-                    tag_stack.push(tag);
-                    dict_stack.push(HashMap::new());
-                } else if !text.is_empty() {
-                    // Add text value to current dict
-                    let current_dict = dict_stack.last_mut().unwrap();
-
-                    if current_dict.contains_key(&tag) {
-                        // Convert to array if already exists
-                        match current_dict.get_mut(&tag) {
-                            Some(Value::Array(arr)) => {
-                                arr.push(Value::String(text));
-                            }
-                            Some(existing) => {
-                                let existing_value = existing.clone();
-                                let mut new_arr = Vec::new();
-                                new_arr.push(existing_value);
-                                new_arr.push(Value::String(text));
-                                *existing = Value::Array(new_arr);
-                            }
-                            None => unreachable!(),
-                        }
-                    } else {
-                        current_dict.insert(tag, Value::String(text));
-                    }
-                }
-            }
-        }
-
-        // Merge all remaining dicts into the header metadata
-        while !dict_stack.is_empty() {
-            let dict = dict_stack.pop().unwrap();
-            if dict_stack.is_empty() {
-                // This is the root dictionary
-                header_metadata = dict;
-            } else if !tag_stack.is_empty() {
-                let tag = tag_stack.pop().unwrap();
-                let parent_dict = dict_stack.last_mut().unwrap();
-
-                if parent_dict.contains_key(&tag) {
-                    // Convert to array if already exists
-                    match parent_dict.get_mut(&tag) {
-                        Some(Value::Array(arr)) => {
-                            arr.push(Value::Object(
-                                dict.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-                            ));
-                        }
-                        Some(existing) => {
-                            let existing_value = existing.clone();
-                            let mut new_arr = Vec::new();
-                            new_arr.push(existing_value);
-                            new_arr.push(Value::Object(
-                                dict.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-                            ));
-                            *existing = Value::Array(new_arr);
-                        }
-                        None => unreachable!(),
-                    }
-                } else {
-                    parent_dict.insert(
-                        tag,
-                        Value::Object(dict.iter().map(|(k, v)| (k.clone(), v.clone())).collect()),
-                    );
-                }
-            }
-        }
+// Detect submission type based on the first line - using &str instead of String
+fn detect_submission_type(first_line: &str) -> Result<&'static str, SgmlParserError> {
+    if first_line.starts_with("<SUBMISSION>") {
+        Ok(SUBMISSION_TYPE_DASHED)
+    } else if first_line.starts_with("-----BEGIN PRIVACY-ENHANCED MESSAGE-----") {
+        Ok(SUBMISSION_TYPE_PRIVACY)
+    } else if first_line.starts_with("<SEC-DOCUMENT>") {
+        Ok(SUBMISSION_TYPE_DEFAULT)
     } else {
-        // tab-default or tab-privacy
-        if submission_type == "tab-privacy" {
-            // Handle privacy message
-            let mut privacy_msg = Vec::new();
-            let mut i = 0;
-
-            while i < lines.len() {
-                if lines[i].trim() == "-----BEGIN PRIVACY-ENHANCED MESSAGE-----" {
-                    i += 1;
-                    while i < lines.len() {
-                        let line = &lines[i];
-                        if line.trim().is_empty()
-                            || (line.contains('<')
-                                && line[line.find('<').unwrap() + 1..]
-                                    .chars()
-                                    .any(|c| c.is_uppercase()))
-                        {
-                            break;
-                        }
-                        privacy_msg.push(line.trim().to_string());
-                        i += 1;
-                    }
-
-                    header_metadata.insert(
-                        "privacy-enhanced-message".to_string(),
-                        Value::String(privacy_msg.join("\n")),
-                    );
-                    break;
-                }
-                i += 1;
-            }
-        }
-
-        // Process indented structure - using a stack-based approach
-        let mut stack: Vec<(usize, String, MetadataDict)> = Vec::new(); // (indent, tag, dict)
-        stack.push((0, "root".to_string(), HashMap::new()));
-
-        for line in lines {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            let indent = line.len() - line.trim_start().len();
-            let mut tag = String::new();
-            let mut text = String::new();
-
-            // Parse the line
-            if let Some(pos) = line.find('>') {
-                // XML-style tag
-                if line.starts_with('<') {
-                    tag = line[1..pos].trim().to_lowercase();
-                    if tag.starts_with('/') {
-                        continue; // Skip closing tags
-                    }
-                    text = line[pos + 1..].trim().to_string();
-                }
-            } else if let Some(pos) = line.find(':') {
-                // Key-value style
-                tag = line[..pos].trim().to_lowercase();
-                text = line[pos + 1..].trim().to_string();
-            }
-
-            // Pop stack if needed based on indentation
-            while stack.len() > 1 && stack.last().unwrap().0 >= indent {
-                let (_, tag_name, dict) = stack.pop().unwrap();
-                let (_, _, parent_dict) = stack.last_mut().unwrap();
-
-                if parent_dict.contains_key(&tag_name) {
-                    // Convert to array if already exists
-                    match parent_dict.get_mut(&tag_name) {
-                        Some(Value::Array(arr)) => {
-                            arr.push(Value::Object(dict.into_iter().collect()));
-                        }
-                        Some(existing) => {
-                            let existing_value = existing.clone();
-                            let mut new_arr = Vec::new();
-                            new_arr.push(existing_value);
-                            new_arr.push(Value::Object(dict.into_iter().collect()));
-                            *existing = Value::Array(new_arr);
-                        }
-                        None => unreachable!(),
-                    }
-                } else {
-                    parent_dict.insert(tag_name, Value::Object(dict.into_iter().collect()));
-                }
-            }
-
-            if !text.is_empty() {
-                // Add text value
-                let (_, _, current_dict) = stack.last_mut().unwrap();
-
-                if current_dict.contains_key(&tag) {
-                    // Convert to array if already exists
-                    match current_dict.get_mut(&tag) {
-                        Some(Value::Array(arr)) => {
-                            arr.push(Value::String(text));
-                        }
-                        Some(existing) => {
-                            let existing_value = existing.clone();
-                            let mut new_arr = Vec::new();
-                            new_arr.push(existing_value);
-                            new_arr.push(Value::String(text));
-                            *existing = Value::Array(new_arr);
-                        }
-                        None => unreachable!(),
-                    }
-                } else {
-                    current_dict.insert(tag, Value::String(text));
-                }
-            } else if !tag.is_empty() {
-                // Start a new nested dict
-                stack.push((indent, tag, HashMap::new()));
-            }
-        }
-
-        // Merge all remaining dicts
-        while stack.len() > 1 {
-            let (_, tag_name, dict) = stack.pop().unwrap();
-            let (_, _, parent_dict) = stack.last_mut().unwrap();
-
-            if parent_dict.contains_key(&tag_name) {
-                // Convert to array if already exists
-                match parent_dict.get_mut(&tag_name) {
-                    Some(Value::Array(arr)) => {
-                        arr.push(Value::Object(dict.into_iter().collect()));
-                    }
-                    Some(existing) => {
-                        let existing_value = existing.clone();
-                        let mut new_arr = Vec::new();
-                        new_arr.push(existing_value);
-                        new_arr.push(Value::Object(dict.into_iter().collect()));
-                        *existing = Value::Array(new_arr);
-                    }
-                    None => unreachable!(),
-                }
-            } else {
-                parent_dict.insert(tag_name, Value::Object(dict.into_iter().collect()));
-            }
-        }
-
-        if !stack.is_empty() {
-            let (_, _, root_dict) = stack.pop().unwrap();
-            header_metadata = root_dict;
-        }
+        Err(SgmlParserError::UnknownSubmissionType)
     }
-
-    header_metadata
 }
 
+// Detect if content is UU-encoded
+#[inline]
 fn detect_uu(first_line: &str) -> bool {
     first_line.trim().starts_with("begin")
 }
 
-fn clean_lines(lines: &[String]) -> Vec<String> {
+// Use existing uudecode function but with optimization for the fallback
+fn decode_uu(lines: &[String]) -> Vec<u8> {
+    // First try the crate's implementation
+    let content = lines.join("\n");
+
+    if let Some((decoded, _)) = uudecode(&content) {
+        return decoded;
+    }
+
+    // Fallback to our optimized implementation
+    optimized_fallback_decode(lines)
+}
+
+fn optimized_fallback_decode(lines: &[String]) -> Vec<u8> {
+    // Estimate capacity to avoid reallocations
+    let mut result = Vec::with_capacity(lines.len() * 45); // Average estimate
+    let mut in_data = false;
+    let mut buffer = [0u8; 128]; // Preallocated buffer for line decoding
+
+    for line in lines {
+        let trimmed = line.trim();
+
+        if !in_data {
+            if trimmed.starts_with("begin") {
+                in_data = true;
+            }
+            continue;
+        }
+
+        if trimmed.is_empty() || trimmed == "end" {
+            break;
+        }
+
+        if trimmed.len() < 2 {
+            continue;
+        }
+
+        let bytes = trimmed.as_bytes();
+        let length = ((bytes[0] - b' ') & 0x3F) as usize;
+
+        if length == 0 {
+            continue;
+        }
+
+        // Optimized line decoding
+        let mut out_idx = 0;
+        let mut i = 1;
+
+        while i + 3 < bytes.len() && out_idx < length {
+            // Process 4 characters at once for 3 output bytes when possible
+            if bytes[i] > b' '
+                && bytes[i] <= b' ' + 64
+                && bytes[i + 1] > b' '
+                && bytes[i + 1] <= b' ' + 64
+                && bytes[i + 2] > b' '
+                && bytes[i + 2] <= b' ' + 64
+                && bytes[i + 3] > b' '
+                && bytes[i + 3] <= b' ' + 64
+            {
+                let val1 = (bytes[i] - b' ') & 0x3F;
+                let val2 = (bytes[i + 1] - b' ') & 0x3F;
+                let val3 = (bytes[i + 2] - b' ') & 0x3F;
+                let val4 = (bytes[i + 3] - b' ') & 0x3F;
+
+                if out_idx < length {
+                    buffer[out_idx] = (val1 << 2) | (val2 >> 4);
+                    out_idx += 1;
+                }
+
+                if out_idx < length {
+                    buffer[out_idx] = ((val2 & 0xF) << 4) | (val3 >> 2);
+                    out_idx += 1;
+                }
+
+                if out_idx < length {
+                    buffer[out_idx] = ((val3 & 0x3) << 6) | val4;
+                    out_idx += 1;
+                }
+
+                i += 4;
+            } else {
+                // Skip invalid characters
+                i += 1;
+            }
+        }
+
+        // Copy the valid bytes to the result
+        result.extend_from_slice(&buffer[..out_idx]);
+    }
+
+    result
+}
+
+// Clean lines optimized for fewer allocations
+fn clean_lines<'a>(lines: &'a [String]) -> Vec<&'a str> {
     if lines.is_empty() {
         return Vec::new();
     }
 
-    // Skip empty lines at the beginning
-    let mut first_non_empty = 0;
-    while first_non_empty < lines.len() && lines[first_non_empty].trim().is_empty() {
-        first_non_empty += 1;
+    // Find first non-empty line
+    let mut start_idx = 0;
+    while start_idx < lines.len() && lines[start_idx].trim().is_empty() {
+        start_idx += 1;
     }
 
-    if first_non_empty >= lines.len() {
+    if start_idx >= lines.len() {
         return Vec::new();
     }
 
-    let first_line = lines[first_non_empty].trim();
+    // Check if this is a special tag
+    let first_line_trimmed = lines[start_idx].trim();
 
-    if SPECIAL_TAGS.contains(first_line) {
-        let tag = &first_line[1..first_line.len() - 1];
+    if first_line_trimmed == TAG_PDF
+        || first_line_trimmed == TAG_XBRL
+        || first_line_trimmed == TAG_XML
+    {
+        let tag = &first_line_trimmed[1..first_line_trimmed.len() - 1];
         let end_tag = format!("</{}>", tag);
 
         // Find closing tag position
         let mut end_pos = lines.len();
-        for (i, line) in lines.iter().enumerate().rev() {
+        for (i, line) in lines[start_idx..].iter().enumerate().rev() {
             if line.trim() == end_tag {
-                end_pos = i;
+                end_pos = start_idx + i;
                 break;
             }
         }
 
-        return lines[first_non_empty + 1..end_pos].to_vec();
+        // Extract content between tags
+        return lines[start_idx + 1..end_pos]
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
     }
 
-    lines[first_non_empty..].to_vec()
+    // Regular content
+    lines[start_idx..].iter().map(|s| s.as_str()).collect()
 }
 
-fn process_text_content(lines: &[String]) -> Vec<u8> {
-    let cleaned_lines = clean_lines(lines);
+// Process text content with optimizations
+fn process_text_content(lines: &[String]) -> Result<Vec<u8>, SgmlParserError> {
+    let cleaned_line_refs = clean_lines(lines);
 
-    if cleaned_lines.is_empty() {
-        return Vec::new();
+    if cleaned_line_refs.is_empty() {
+        return Ok(Vec::new());
     }
 
-    if detect_uu(&cleaned_lines[0]) {
-        // Use our UU decoder
-        return uu_decode::decode(&cleaned_lines);
+    if detect_uu(cleaned_line_refs[0]) {
+        // Convert &str to String for the UU decoder
+        let cleaned_lines: Vec<String> = cleaned_line_refs.iter().map(|&s| s.to_string()).collect();
+        Ok(decode_uu(&cleaned_lines))
     } else {
-        // Regular text content
-        return cleaned_lines.join("\n").into_bytes();
+        // Estimate capacity for the joined result
+        let total_len =
+            cleaned_line_refs.iter().map(|s| s.len()).sum::<usize>() + cleaned_line_refs.len();
+        let mut result = String::with_capacity(total_len);
+
+        for (i, &line) in cleaned_line_refs.iter().enumerate() {
+            if i > 0 {
+                result.push('\n');
+            }
+            result.push_str(line);
+        }
+
+        Ok(result.into_bytes())
     }
 }
 
+// Parse document metadata with fewer allocations
 fn parse_document_metadata(lines: &[String]) -> MetadataDict {
-    let mut metadata = HashMap::new();
-    let mut current_key: Option<String> = None;
+    let mut metadata = HashMap::with_capacity(lines.len() / 2);
+    let mut current_key = None;
 
     for line in lines {
-        if line.starts_with('<') {
-            if let Some(pos) = line.find('>') {
-                let key = line[1..pos].to_lowercase();
-                let value = line[pos + 1..].trim();
-                metadata.insert(key.clone(), Value::String(value.to_string()));
-                current_key = Some(key);
-            }
-        } else if let Some(ref key) = current_key {
+        if line.starts_with('<') && line.contains('>') {
+            let pos = line.find('>').unwrap();
+            let key = line[1..pos].to_lowercase();
+            let value = line[pos + 1..].trim().to_string();
+
+            metadata.insert(key.clone(), MetadataValue::String(value));
+            current_key = Some(key);
+        } else if let Some(key) = &current_key {
             // Continuation of previous value
-            if let Some(Value::String(ref mut val)) = metadata.get_mut(key) {
-                *val = format!("{} {}", val, line.trim());
+            if let Some(MetadataValue::String(value)) = metadata.get_mut(key) {
+                value.reserve(line.len() + 1);
+                value.push(' ');
+                value.push_str(line.trim());
             }
         }
     }
@@ -472,40 +266,57 @@ fn parse_document_metadata(lines: &[String]) -> MetadataDict {
     metadata
 }
 
+// Build document index with optimizations
 fn build_document_index(lines: &[String]) -> DocumentIndex {
-    let mut index = DocumentIndex::new();
-    let mut doc_start: isize = -1;
-    let mut text_start: isize = -1;
+    let mut index = DocumentIndex {
+        document_positions: Vec::with_capacity(10), // Reasonable initial capacity
+        text_positions: Vec::with_capacity(10),
+        header_end: 0,
+        text_leftovers: HashMap::new(),
+    };
 
     // Find first document to mark header end
     for (i, line) in lines.iter().enumerate() {
-        if line == "<DOCUMENT>" {
+        if line == DOCUMENT_START {
             index.header_end = i;
             break;
         }
     }
 
     // Index all document and text positions
+    let mut doc_start = usize::MAX;
+    let mut text_start = usize::MAX;
+
     for (i, line) in lines.iter().enumerate() {
-        if line == "<DOCUMENT>" {
-            doc_start = i as isize;
-        } else if line == "</DOCUMENT>" {
-            if doc_start >= 0 {
-                index.document_positions.push((doc_start as usize, i));
-                doc_start = -1;
+        if line == DOCUMENT_START {
+            doc_start = i;
+        } else if line == DOCUMENT_END {
+            if doc_start != usize::MAX {
+                index.document_positions.push((doc_start, i));
+                doc_start = usize::MAX;
             }
-        } else if line == "<TEXT>" {
-            text_start = i as isize;
-        } else if line.contains("</TEXT>") {
-            // Check if text_start is valid
-            if text_start >= 0 {
-                // Handle case where </TEXT> is at the end of line but not the entire line
-                if line != "</TEXT>" {
-                    let parts: Vec<&str> = line.split("</TEXT>").collect();
-                    index.text_leftovers.insert(i, parts[0].to_string());
+        } else if line == TEXT_START {
+            text_start = i;
+        } else if line.contains(TEXT_END) {
+            // Check if next non-empty line is </DOCUMENT>
+            let mut next_line = None;
+            for j in i + 1..lines.len() {
+                let trimmed = lines[j].trim();
+                if !trimmed.is_empty() {
+                    next_line = Some(trimmed);
+                    break;
                 }
-                index.text_positions.push((text_start as usize, i));
-                text_start = -1;
+            }
+
+            if text_start != usize::MAX && next_line == Some(DOCUMENT_END) {
+                if line != TEXT_END {
+                    if let Some(pos) = line.find(TEXT_END) {
+                        index.text_leftovers.insert(i, line[..pos].to_string());
+                    }
+                }
+
+                index.text_positions.push((text_start, i));
+                text_start = usize::MAX;
             }
         }
     }
@@ -513,28 +324,279 @@ fn build_document_index(lines: &[String]) -> DocumentIndex {
     index
 }
 
-pub fn parse_sgml_submission_into_memory(
-    content: Option<String>,
-    filepath: Option<&Path>,
-) -> Result<(MetadataDict, Vec<Vec<u8>>), String> {
-    if content.is_none() && filepath.is_none() {
-        return Err("Either filepath or content must be provided".to_string());
+// Optimized header metadata parsing
+fn parse_header_metadata<'a>(lines: &'a [String], submission_type: &str) -> MetadataDict {
+    let estimated_size = lines.len() / 3;
+    let mut header_metadata = HashMap::with_capacity(estimated_size);
+
+    match submission_type {
+        SUBMISSION_TYPE_DASHED => {
+            parse_dashed_metadata(lines, &mut header_metadata);
+        }
+        SUBMISSION_TYPE_PRIVACY | SUBMISSION_TYPE_DEFAULT => {
+            parse_tab_metadata(lines, &mut header_metadata, submission_type);
+        }
+        _ => {}
     }
 
-    // Read content if not provided
-    let content = match content {
-        Some(c) => c,
-        None => {
-            let mut file =
-                File::open(filepath.unwrap()).map_err(|e| format!("Failed to open file: {}", e))?;
-            let mut content = String::new();
-            file.read_to_string(&mut content)
-                .map_err(|e| format!("Failed to read file: {}", e))?;
-            content
+    header_metadata
+}
+
+// Split the metadata parsing for better organization
+fn parse_dashed_metadata(lines: &[String], header_metadata: &mut MetadataDict) {
+    #[derive(Clone)]
+    struct StackItem {
+        tag: String,
+        dict: MetadataDict,
+    }
+
+    let mut stack: Vec<StackItem> = Vec::with_capacity(8);
+
+    for (i, line) in lines.iter().enumerate() {
+        if !line.contains('>') {
+            continue;
         }
+
+        if let Some(pos) = line.find('>') {
+            let mut tag = (&line[1..pos]).to_lowercase();
+            let text = line[pos + 1..].trim();
+
+            // Handle closing tags
+            if tag.starts_with('/') {
+                tag = tag[1..].to_string(); // Remove the '/'
+
+                // Pop from stack if matching tag
+                if let Some(item) = stack.pop() {
+                    if item.tag == tag {
+                        if stack.is_empty() {
+                            header_metadata.insert(tag, MetadataValue::Dict(item.dict));
+                        } else if let Some(parent) = stack.last_mut() {
+                            parent.dict.insert(tag, MetadataValue::Dict(item.dict));
+                        }
+                    } else {
+                        // Tags don't match, put it back
+                        stack.push(item);
+                    }
+                }
+                continue;
+            }
+
+            // Look ahead to check if this tag has a closing tag
+            let has_closing_tag = lines[i + 1..].iter().any(|l| {
+                let l_lower = l.to_lowercase();
+                l_lower.contains(&format!("</{}>", tag))
+            });
+
+            if has_closing_tag {
+                // This tag has a closing tag, push to stack
+                stack.push(StackItem {
+                    tag: tag.clone(),
+                    dict: HashMap::with_capacity(8),
+                });
+            } else if !text.is_empty() {
+                // This is a leaf tag with text content
+                if let Some(item) = stack.last_mut() {
+                    insert_or_append(&mut item.dict, tag, MetadataValue::String(text.to_string()));
+                } else {
+                    insert_or_append(
+                        header_metadata,
+                        tag,
+                        MetadataValue::String(text.to_string()),
+                    );
+                }
+            }
+        }
+    }
+
+    // Process any remaining items in stack
+    while let Some(item) = stack.pop() {
+        if stack.is_empty() {
+            header_metadata.insert(item.tag, MetadataValue::Dict(item.dict));
+        } else if let Some(parent) = stack.last_mut() {
+            parent.dict.insert(item.tag, MetadataValue::Dict(item.dict));
+        }
+    }
+}
+
+fn parse_tab_metadata(lines: &[String], header_metadata: &mut MetadataDict, submission_type: &str) {
+    struct IndentedItem {
+        indent: usize,
+        tag: String,
+        dict: MetadataDict,
+    }
+
+    let mut stack: Vec<IndentedItem> = Vec::with_capacity(8);
+    let mut lines_to_process = lines;
+    let mut privacy_msg = String::new();
+
+    // Handle privacy-enhanced message specially
+    if submission_type == SUBMISSION_TYPE_PRIVACY {
+        let mut found_start = false;
+        let mut skip_lines = 0;
+
+        for (i, line) in lines.iter().enumerate() {
+            if line.trim() == "-----BEGIN PRIVACY-ENHANCED MESSAGE-----" {
+                found_start = true;
+                skip_lines = i + 1;
+                continue;
+            }
+
+            if found_start {
+                let trimmed = line.trim();
+                if trimmed.is_empty()
+                    || (line.contains('<')
+                        && line
+                            .find('<')
+                            .map(|pos| line[pos + 1..].chars().any(|c| c.is_uppercase()))
+                            .unwrap_or(false))
+                {
+                    break;
+                }
+
+                if !privacy_msg.is_empty() {
+                    privacy_msg.push('\n');
+                }
+                privacy_msg.push_str(trimmed);
+                skip_lines += 1;
+            }
+        }
+
+        if !privacy_msg.is_empty() {
+            header_metadata.insert(
+                "privacy-enhanced-message".to_string(),
+                MetadataValue::String(privacy_msg),
+            );
+
+            if skip_lines < lines.len() {
+                lines_to_process = &lines[skip_lines..];
+            } else {
+                lines_to_process = &[];
+            }
+        }
+    }
+
+    for line in lines_to_process {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let indent = line.len() - line.trim_start().len();
+
+        // Parse tag and text
+        let (tag, text) = if let Some(pos) = line.find('>') {
+            let tag_part = &line[1..pos];
+            if tag_part.starts_with('/') {
+                continue; // Skip closing tags
+            }
+            (
+                tag_part.trim().to_lowercase(),
+                line[pos + 1..].trim().to_string(),
+            )
+        } else if let Some(pos) = line.find(':') {
+            (
+                line[..pos].trim().to_lowercase(),
+                line[pos + 1..].trim().to_string(),
+            )
+        } else {
+            continue;
+        };
+
+        // Remove entries from stack with greater or equal indent
+        while !stack.is_empty() && stack.last().unwrap().indent >= indent {
+            let item = stack.pop().unwrap();
+
+            if stack.is_empty() {
+                header_metadata.insert(item.tag, MetadataValue::Dict(item.dict));
+            } else {
+                stack
+                    .last_mut()
+                    .unwrap()
+                    .dict
+                    .insert(item.tag, MetadataValue::Dict(item.dict));
+            }
+        }
+
+        if !text.is_empty() {
+            // Text content
+            if let Some(item) = stack.last_mut() {
+                insert_or_append(&mut item.dict, tag.clone(), MetadataValue::String(text));
+            } else {
+                insert_or_append(header_metadata, tag.clone(), MetadataValue::String(text));
+            }
+        } else {
+            // No text, this is a container
+            // Remove entries with same indent
+            while !stack.is_empty() && stack.last().unwrap().indent == indent {
+                let item = stack.pop().unwrap();
+
+                if stack.is_empty() {
+                    header_metadata.insert(item.tag, MetadataValue::Dict(item.dict));
+                } else {
+                    stack
+                        .last_mut()
+                        .unwrap()
+                        .dict
+                        .insert(item.tag, MetadataValue::Dict(item.dict));
+                }
+            }
+
+            // Push new container
+            stack.push(IndentedItem {
+                indent,
+                tag: tag.clone(),
+                dict: HashMap::with_capacity(8),
+            });
+        }
+    }
+
+    // Process any remaining items in stack
+    while let Some(item) = stack.pop() {
+        if stack.is_empty() {
+            header_metadata.insert(item.tag, MetadataValue::Dict(item.dict));
+        } else {
+            stack
+                .last_mut()
+                .unwrap()
+                .dict
+                .insert(item.tag, MetadataValue::Dict(item.dict));
+        }
+    }
+}
+
+// Helper function to insert a value or append to a list if key exists
+fn insert_or_append(dict: &mut MetadataDict, key: String, value: MetadataValue) {
+    if let Some(existing) = dict.get_mut(&key) {
+        match existing {
+            MetadataValue::List(list) => {
+                list.push(value);
+            }
+            _ => {
+                let old_value = existing.clone();
+                *existing = MetadataValue::List(vec![old_value, value]);
+            }
+        }
+    } else {
+        dict.insert(key, value);
+    }
+}
+
+/// Parse SGML submission - main entry point
+pub fn parse_sgml_submission(
+    content: &str,
+    filepath: Option<&str>,
+) -> Result<(MetadataDict, Vec<Vec<u8>>), SgmlParserError> {
+    let content_str = if let Some(path) = filepath {
+        fs::read_to_string(path)?
+    } else {
+        content.to_string()
     };
 
-    let lines: Vec<String> = content.lines().map(String::from).collect();
+    let lines: Vec<String> = content_str.lines().map(String::from).collect();
+
+    if lines.is_empty() {
+        return Ok((MetadataDict::new(), Vec::new()));
+    }
 
     // Detect submission type
     let submission_type = detect_submission_type(&lines[0])?;
@@ -544,58 +606,60 @@ pub fn parse_sgml_submission_into_memory(
 
     // Parse header metadata
     let header_lines = &lines[..doc_index.header_end];
-    let metadata = parse_header_metadata(header_lines, submission_type);
+    let mut metadata = parse_header_metadata(header_lines, submission_type);
 
     // Process documents using indexed positions
-    let mut documents = Vec::new();
-    let mut documents_metadata = Vec::new();
+    let estimated_docs = doc_index.document_positions.len();
+    let mut documents = Vec::with_capacity(estimated_docs);
+    let mut documents_metadata = Vec::with_capacity(estimated_docs);
 
-    for &(doc_start, doc_end) in &doc_index.document_positions {
+    for (doc_start, doc_end) in &doc_index.document_positions {
         // Find corresponding text section for this document
-        let mut text_start = 0;
-        let mut text_end = 0;
-        let mut found_text = false;
+        let mut text_start = None;
+        let mut text_end = None;
 
-        for &(start, end) in &doc_index.text_positions {
+        for (start, end) in &doc_index.text_positions {
             if start > doc_start && end < doc_end {
-                text_start = start;
-                text_end = end;
-                found_text = true;
+                text_start = Some(*start);
+                text_end = Some(*end);
                 break;
             }
         }
 
-        if !found_text {
-            continue; // Skip documents without text sections
+        if let (Some(start), Some(end)) = (text_start, text_end) {
+            // Extract document metadata
+            let doc_metadata = parse_document_metadata(&lines[doc_start + 1..start]);
+            documents_metadata.push(doc_metadata);
+
+            // Process text contents
+            let mut text_lines: Vec<String>;
+
+            // Optimization: If no leftovers, use slice directly
+            if doc_index.text_leftovers.contains_key(&end) {
+                text_lines = lines[start + 1..end].to_vec();
+                text_lines.push(doc_index.text_leftovers[&end].clone());
+            } else {
+                text_lines = lines[start + 1..=end].to_vec();
+            }
+
+            // Process content and add to documents list
+            let content_bytes = process_text_content(&text_lines)?;
+            documents.push(content_bytes);
         }
-
-        // Extract document metadata
-        let doc_metadata = parse_document_metadata(&lines[doc_start + 1..text_start]);
-        documents_metadata.push(doc_metadata);
-
-        // Process text contents
-        let mut text_lines = lines[text_start + 1..text_end].to_vec();
-
-        // If there's leftover content at the end
-        if let Some(leftover) = doc_index.text_leftovers.get(&text_end) {
-            text_lines.push(leftover.clone());
-        }
-
-        // Process content and add to documents list
-        let content_bytes = process_text_content(&text_lines);
-        documents.push(content_bytes);
     }
 
-    // Add documents metadata to the main metadata
-    let documents_value = Value::Array(
-        documents_metadata
-            .into_iter()
-            .map(|m| Value::Object(m.into_iter().collect()))
-            .collect(),
-    );
+    // Add documents metadata to the metadata dictionary
+    if !documents_metadata.is_empty() {
+        metadata.insert(
+            "documents".to_string(),
+            MetadataValue::List(
+                documents_metadata
+                    .into_iter()
+                    .map(MetadataValue::Dict)
+                    .collect(),
+            ),
+        );
+    }
 
-    let mut final_metadata = metadata;
-    final_metadata.insert("documents".to_string(), documents_value);
-
-    Ok((final_metadata, documents))
+    Ok((metadata, documents))
 }
