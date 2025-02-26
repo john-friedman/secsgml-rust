@@ -1,0 +1,13 @@
+C:\Users\jgfri\OneDrive\Desktop\secsgml2\target\debug\deps\libpyo3_build_config-e3951626255c44ed.rmeta: C:\Users\jgfri\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\pyo3-build-config-0.19.2\src\lib.rs C:\Users\jgfri\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\pyo3-build-config-0.19.2\src\errors.rs C:\Users\jgfri\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\pyo3-build-config-0.19.2\src\impl_.rs C:\Users\jgfri\OneDrive\Desktop\secsgml2\target\debug\build\pyo3-build-config-dbc08258b0a75a98\out/pyo3-build-config-file.txt C:\Users\jgfri\OneDrive\Desktop\secsgml2\target\debug\build\pyo3-build-config-dbc08258b0a75a98\out/pyo3-build-config.txt
+
+C:\Users\jgfri\OneDrive\Desktop\secsgml2\target\debug\deps\libpyo3_build_config-e3951626255c44ed.rlib: C:\Users\jgfri\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\pyo3-build-config-0.19.2\src\lib.rs C:\Users\jgfri\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\pyo3-build-config-0.19.2\src\errors.rs C:\Users\jgfri\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\pyo3-build-config-0.19.2\src\impl_.rs C:\Users\jgfri\OneDrive\Desktop\secsgml2\target\debug\build\pyo3-build-config-dbc08258b0a75a98\out/pyo3-build-config-file.txt C:\Users\jgfri\OneDrive\Desktop\secsgml2\target\debug\build\pyo3-build-config-dbc08258b0a75a98\out/pyo3-build-config.txt
+
+C:\Users\jgfri\OneDrive\Desktop\secsgml2\target\debug\deps\pyo3_build_config-e3951626255c44ed.d: C:\Users\jgfri\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\pyo3-build-config-0.19.2\src\lib.rs C:\Users\jgfri\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\pyo3-build-config-0.19.2\src\errors.rs C:\Users\jgfri\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\pyo3-build-config-0.19.2\src\impl_.rs C:\Users\jgfri\OneDrive\Desktop\secsgml2\target\debug\build\pyo3-build-config-dbc08258b0a75a98\out/pyo3-build-config-file.txt C:\Users\jgfri\OneDrive\Desktop\secsgml2\target\debug\build\pyo3-build-config-dbc08258b0a75a98\out/pyo3-build-config.txt
+
+C:\Users\jgfri\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\pyo3-build-config-0.19.2\src\lib.rs:
+C:\Users\jgfri\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\pyo3-build-config-0.19.2\src\errors.rs:
+C:\Users\jgfri\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\pyo3-build-config-0.19.2\src\impl_.rs:
+C:\Users\jgfri\OneDrive\Desktop\secsgml2\target\debug\build\pyo3-build-config-dbc08258b0a75a98\out/pyo3-build-config-file.txt:
+C:\Users\jgfri\OneDrive\Desktop\secsgml2\target\debug\build\pyo3-build-config-dbc08258b0a75a98\out/pyo3-build-config.txt:
+
+# env-dep:OUT_DIR=C:\\Users\\jgfri\\OneDrive\\Desktop\\secsgml2\\target\\debug\\build\\pyo3-build-config-dbc08258b0a75a98\\out

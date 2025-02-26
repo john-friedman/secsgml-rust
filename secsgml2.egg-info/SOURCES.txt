@@ -1,0 +1,8 @@
+setup.py
+secsgml2/__init__.py
+secsgml2/rust_sgml.py
+secsgml2.egg-info/PKG-INFO
+secsgml2.egg-info/SOURCES.txt
+secsgml2.egg-info/dependency_links.txt
+secsgml2.egg-info/not-zip-safe
+secsgml2.egg-info/top_level.txt

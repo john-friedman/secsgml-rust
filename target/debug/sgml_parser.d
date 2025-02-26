@@ -1,0 +1,1 @@
+C:\Users\jgfri\OneDrive\Desktop\secsgml2\target\debug\sgml_parser.dll: C:\Users\jgfri\OneDrive\Desktop\secsgml2\src\benchmark.rs C:\Users\jgfri\OneDrive\Desktop\secsgml2\src\lib.rs C:\Users\jgfri\OneDrive\Desktop\secsgml2\src\python.rs C:\Users\jgfri\OneDrive\Desktop\secsgml2\src\sgml_extractor.rs C:\Users\jgfri\OneDrive\Desktop\secsgml2\src\sgml_parser.rs
