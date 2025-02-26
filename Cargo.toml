@@ -1,0 +1,11 @@
+[package]
+name = "secsgml"
+version = "0.1.0"
+edition = "2021"
+description = "A Rust library for parsing SEC SGML submissions"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuencode = "0.1.0"
