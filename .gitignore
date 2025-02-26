@@ -1,0 +1,60 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo.lock is typically kept for binary projects, but you may want to uncomment if it's a library
+# Cargo.lock
+
+# Generated documentation
+/doc/
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+.history/
+.ionide/
+
+# IntelliJ IDEA / CLion / RustRover
+.idea/
+*.iml
+*.iws
+out/
+.idea_modules/
+
+# Test outputs
+output/
+*.txt
+*.bin
+*.json
+*.log
+
+# Debugging and profiling
+*.profraw
+flamegraph.svg
+perf.data*
+
+# macOS (in case the repo is shared with macOS users)
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
